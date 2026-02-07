@@ -18,7 +18,7 @@ on:
       mirror:
         description: 'Mirror source (tuna/ustc/google)'
         required: true
-        default: 'tuna'
+        default: 'google'
 
 jobs:
   build:
@@ -39,7 +39,7 @@ jobs:
       - name: Install repo tool
         run: |
           if ! command -v repo &> /dev/null; then
-            sudo curl -L https://mirrors.tuna.tsinghua.edu.cn/git/git-repo -o /usr/local/bin/repo
+            sudo curl -L https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
             sudo chmod a+x /usr/local/bin/repo
           fi
           git config --global user.email "builder@github.com"
