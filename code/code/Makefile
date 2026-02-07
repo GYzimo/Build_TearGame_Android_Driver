@@ -1,0 +1,41 @@
+# ============================================================================
+# 泪心开源驱动 - TearGame Open Source Driver
+# ============================================================================
+# 作者 (Author): 泪心 (Tear)
+# QQ: 2254013571
+# 邮箱 (Email): tearhacker@outlook.com
+# 电报 (Telegram): t.me/TearGame
+# GitHub: github.com/tearhacker
+# ============================================================================
+# 本项目完全免费开源，代码明文公开
+# This project is completely free and open source with clear code
+# 
+# 禁止用于引流盈利，保留开源版权所有
+# Commercial use for profit is prohibited, all open source rights reserved
+# 
+# 凡是恶意盈利者需承担法律责任
+# Those who maliciously profit will bear legal responsibility
+# ============================================================================
+#
+# TearGame Driver Makefile
+#
+
+# 模块名称 - 使用 obj-m 编译为可加载模块
+obj-m := TearGame.o
+
+# 多文件模块，指定组成模块的目标文件
+TearGame-objs := entry.o memory.o process.o hw_breakpoint.o
+
+# 内核源码目录
+KDIR ?= ./kernel-src
+PWD := $(shell pwd)
+
+all:
+	$(MAKE) -C $(KDIR) M=$(PWD) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules
+
+clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- clean
+	rm -f *.ko *.o *.mod *.mod.c .*.cmd modules.order Module.symvers
+	rm -rf kernel-src
+
+.PHONY: all clean
