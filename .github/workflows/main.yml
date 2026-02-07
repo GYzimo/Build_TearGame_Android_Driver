@@ -1,42 +1,145 @@
-name: Build TearGame Driver
+name: Android 内核 Tear 构建器
 
 on:
   workflow_dispatch:
+    inputs:
+      android_version:
+        description: 'Android Version (Kernel) (e.g., 16)'
+        required: true
+        default: '16'
+      kernel_version:
+        description: 'Kernel Version (e.g., 6.6)'
+        required: true
+        default: '6.6'
+      target_arch:
+        description: 'Target Architecture (aarch64, x86_64, etc.)'
+        required: true
+        default: 'aarch64'
+      mirror:
+        description: 'Mirror source (tuna/ustc/google)'
+        required: true
+        default: 'tuna'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential gcc-aarch64-linux-gnu
+      - name: Check disk space
+        run: df -h
 
-    - name: Build driver
-      run: |
-        echo "Building driver..."
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        make
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python-is-python3 git-core gnupg curl zlib1g-dev libncurses5 unzip rsync
 
-    - name: Create artifacts directory
-      run: |
-        mkdir -p artifacts
-        echo "Created artifacts directory"
-        ls -la
+      - name: Install repo tool
+        run: |
+          if ! command -v repo &> /dev/null; then
+            sudo curl -L https://mirrors.tuna.tsinghua.edu.cn/git/git-repo -o /usr/local/bin/repo
+            sudo chmod a+x /usr/local/bin/repo
+          fi
+          git config --global user.email "builder@github.com"
+          git config --global user.name "Kernel Builder"
+          git config --global color.ui false
 
-    - name: Collect artifacts
-      run: |
-        echo "Collecting driver modules..."
-        cp -f *.ko artifacts/ 2>/dev/null || echo "No kernel modules found"
-        echo "Artifacts directory contents:"
-        ls -la artifacts/
+      - name: Set mirror URL
+        id: mirror
+        run: |
+          case "${{ github.event.inputs.mirror }}" in
+            tuna)
+              echo "MANIFEST_URL=https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/kernel/manifest" >> $GITHUB_ENV
+              echo "REPO_URL=https://mirrors.tuna.tsinghua.edu.cn/git/AOSP" >> $GITHUB_ENV
+              ;;
+            ustc)
+              echo "MANIFEST_URL=https://mirrors.ustc.edu.cn/aosp/kernel/manifest" >> $GITHUB_ENV
+              echo "REPO_URL=https://mirrors.ustc.edu.cn/aosp" >> $GITHUB_ENV
+              ;;
+            google)
+              echo "MANIFEST_URL=https://android.googlesource.com/kernel/manifest" >> $GITHUB_ENV
+              echo "REPO_URL=https://android.googlesource.com" >> $GITHUB_ENV
+              ;;
+          esac
 
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: teargame-driver
-        path: ./artifacts/
-        retention-days: 7
+      - name: Set up Android Kernel source
+        run: |
+          mkdir -p android-kernel && cd android-kernel
+          
+          # 使用镜像初始化
+          repo init -u ${{ env.MANIFEST_URL }} -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} --depth=1
+          
+          # 替换 manifest 中的 URL 为镜像
+          if [ "${{ github.event.inputs.mirror }}" != "google" ]; then
+            sed -i 's|https://android.googlesource.com|${{ env.REPO_URL }}|g' .repo/manifests/default.xml
+          fi
+          
+          repo sync -c --no-tags --optimized-fetch --force-sync --no-clone-bundle -j$(nproc)
+          
+      - name: Check disk after sync
+        run: |
+          df -h
+          du -sh android-kernel/
+
+      - name: Increase stack frame size limit
+        run: |
+          cd android-kernel
+          if [ -f common/Makefile ]; then
+            find . -type f -name "Makefile*" -exec sed -i 's/-Wframe-larger-than=[0-9]*/-Wframe-larger-than=4096/g' {} +
+            grep -q "FRAME_WARN" common/Makefile || echo 'KBUILD_CFLAGS += -Wframe-larger-than=4096' >> common/Makefile
+          fi
+
+      - name: Build kernel
+        run: |
+          cd android-kernel
+          if [ ${{ github.event.inputs.android_version }} -le 13 ]; then
+            BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j$(nproc)
+            OUTPUT_PATH="out/android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}/dist"
+          else
+            echo "Using Bazel build system for Android ${{ github.event.inputs.android_version }}"
+            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist
+            OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
+          fi
+          echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
+          echo "Build completed, output path: $OUTPUT_PATH"
+
+      - name: Create artifacts directory
+        run: |
+          mkdir -p artifacts
+          echo "Created artifacts directory at: $(pwd)/artifacts"
+
+      - name: Collect artifacts
+        run: |
+          cd android-kernel
+          echo "Looking for build artifacts in: ${{ env.OUTPUT_PATH }}"
+          ls -la ${{ env.OUTPUT_PATH }} || echo "Output path does not exist"
+          
+          # Copy artifacts
+          if [ -d "${{ env.OUTPUT_PATH }}" ]; then
+            echo "Copying artifacts..."
+            cp -r ${{ env.OUTPUT_PATH }}/* ../artifacts/ 2>/dev/null || echo "Failed to copy artifacts"
+          else
+            echo "Output path does not exist, searching for kernel modules..."
+            find . -name "*.ko" -type f | grep -v ".git" | xargs -I {} cp {} ../artifacts/ 2>/dev/null || echo "No kernel modules found"
+          fi
+          
+          # Check artifacts directory
+          cd ..
+          echo "Artifacts directory contents:"
+          ls -la artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-kernel-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-${{ github.event.inputs.target_arch }}
+          path: ./artifacts/
+          retention-days: 7
+
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          rm -rf android-kernel
+          rm -rf artifacts
+          echo "Cleanup completed"
