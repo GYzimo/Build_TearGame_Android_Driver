@@ -1,4 +1,4 @@
-name: name: Android Kernel 612
+name: Android Kernel 612
 
 on:
   workflow_dispatch:
@@ -103,14 +103,13 @@ jobs:
             OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
           fi
           echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
-          echo "Build completed, output path: $OUTPUT_PATH"
-          ls -la $OUTPUT_PATH || echo "Output path does not exist"
 
       - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4.6.2
         with:
           name: android-kernel-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-${{ github.event.inputs.target_arch }}
-          path: android-kernel/${{ env.OUTPUT_PATH }}
+          path: |
+            android-kernel/${{ env.OUTPUT_PATH }}
 
       - name: Cleanup workspace
         if: always()
